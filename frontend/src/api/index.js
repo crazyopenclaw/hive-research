@@ -1,4 +1,4 @@
-/** HiveResearch API client */
+/** ResearchSquid API client */
 
 const BASE = ''
 

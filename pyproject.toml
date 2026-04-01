@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
-name = "hive-research"
+name = "research-squid"
 version = "0.2.0"
 description = "Two-tier autonomous research system — Tier 1 proposes, Tier 2 validates, DAG remembers"
 requires-python = ">=3.11"
@@ -31,6 +31,6 @@ gpu = ["torch", "transformers"]
 bio = ["rdkit", "biopython"]
 
 [project.scripts]
-hive-coordinator = "hive.coordinator.app:run"
-hive-worker = "hive.agents.tier1:run_worker"
-hive-mcp = "hive.mcp.server:run"
+squid-coordinator = "squid.coordinator.app:run"
+squid-worker = "squid.agents.tier1:run_worker"
+squid-mcp = "squid.mcp.server:run"

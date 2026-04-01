@@ -1,8 +1,8 @@
 <template>
   <div class="home">
     <header class="header">
-      <div class="brand">HIVERESEARCH</div>
-      <div class="tagline">Tier 1 proposes. Tier 2 validates. DAG remembers.</div>
+      <div class="brand">RESEARCHSQUID</div>
+      <div class="tagline">🦑 Eight arms of evidence. One truth.</div>
     </header>
 
     <main class="main">

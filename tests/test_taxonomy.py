@@ -2,7 +2,7 @@
 
 import pytest
 
-from hive.dag.taxonomy import classify_source_tier, get_tier_label
+from squid.dag.taxonomy import classify_source_tier, get_tier_label
 
 
 def test_tier1_pubmed():

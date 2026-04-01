@@ -23,11 +23,11 @@ def gen_id(prefix: str) -> str:
 @pytest.fixture
 def dag_client():
     """Create a test DAG client."""
-    from hive.dag.client import DAGClient
+    from squid.dag.client import DAGClient
     client = DAGClient(
         uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
         user=os.getenv("NEO4J_USER", "neo4j"),
-        password=os.getenv("NEO4J_PASSWORD", "hiveresearch"),
+        password=os.getenv("NEO4J_PASSWORD", "researchsquid"),
     )
     return client
 
@@ -35,9 +35,9 @@ def dag_client():
 @pytest.mark.asyncio
 async def test_write_and_read_finding(dag_client):
     """Write a finding, read it back, verify all fields."""
-    from hive.dag.writer import post_finding
-    from hive.dag.reader import get_frontier
-    from hive.schema.finding import Finding
+    from squid.dag.writer import post_finding
+    from squid.dag.reader import get_frontier
+    from squid.schema.finding import Finding
 
     await dag_client.connect()
     test_session = gen_id("test_session")
@@ -68,9 +68,9 @@ async def test_write_and_read_finding(dag_client):
 @pytest.mark.asyncio
 async def test_write_finding_with_edge(dag_client):
     """Write a finding that SUPPORTS another finding."""
-    from hive.dag.writer import post_finding
-    from hive.dag.reader import get_frontier
-    from hive.schema.finding import Finding
+    from squid.dag.writer import post_finding
+    from squid.dag.reader import get_frontier
+    from squid.schema.finding import Finding
 
     await dag_client.connect()
     test_session = gen_id("test_session")
@@ -107,8 +107,8 @@ async def test_write_finding_with_edge(dag_client):
 @pytest.mark.asyncio
 async def test_contradicts_requires_counter_claim(dag_client):
     """CONTRADICTS edge without counter_claim should fail."""
-    from hive.dag.writer import post_finding
-    from hive.schema.finding import Finding
+    from squid.dag.writer import post_finding
+    from squid.schema.finding import Finding
 
     await dag_client.connect()
     test_session = gen_id("test_session")
@@ -133,7 +133,7 @@ async def test_contradicts_requires_counter_claim(dag_client):
 @pytest.mark.asyncio
 async def test_numerical_verification_required():
     """Finding with numbers but no verification should fail validation."""
-    from hive.schema.finding import Finding
+    from squid.schema.finding import Finding
 
     with pytest.raises(ValueError, match="numerical"):
         Finding(
@@ -151,7 +151,7 @@ async def test_numerical_verification_required():
 @pytest.mark.asyncio
 async def test_taxonomy_classification():
     """Verify source tier classification."""
-    from hive.dag.taxonomy import classify_source_tier
+    from squid.dag.taxonomy import classify_source_tier
 
     assert classify_source_tier("https://pubmed.ncbi.nlm.nih.gov/12345/")[0] == 1
     assert classify_source_tier("https://arxiv.org/abs/2301.00001")[0] == 2

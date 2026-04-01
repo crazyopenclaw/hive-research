@@ -1,4 +1,4 @@
-# HiveResearch — Full Architecture Document (v3)
+# ResearchSquid — Full Architecture Document (v3)
 
 See the full architecture document provided separately.
 

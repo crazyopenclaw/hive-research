@@ -1,8 +1,8 @@
 #!/bin/bash
-# HiveResearch — one-command local dev setup
+# ResearchSquid — one-command local dev setup
 set -e
 
-echo "=== HiveResearch Dev Setup ==="
+echo "=== ResearchSquid Dev Setup ==="
 
 # Check prerequisites
 command -v python3 >/dev/null 2>&1 || { echo "Python 3.11+ required"; exit 1; }
@@ -32,7 +32,7 @@ echo "  docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d"
 echo ""
 echo "Or run coordinator locally:"
 echo "  source .venv/bin/activate"
-echo "  uvicorn hive.coordinator.app:app --reload --port 8000"
+echo "  uvicorn squid.coordinator.app:app --reload --port 8000"
 echo ""
 echo "Health check:"
 echo "  curl http://localhost:8000/health"

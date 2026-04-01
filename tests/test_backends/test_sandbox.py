@@ -2,8 +2,8 @@
 
 import pytest
 
-from hive.backends.sandbox_python.executor import SandboxPythonBackend
-from hive.schema.experiment import ExperimentSpec
+from squid.backends.sandbox_python.executor import SandboxPythonBackend
+from squid.schema.experiment import ExperimentSpec
 
 
 def test_sandbox_backend_exists():

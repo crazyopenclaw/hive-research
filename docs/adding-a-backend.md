@@ -12,8 +12,8 @@ One file. Implement `BaseBackend`. Register in `registry.py`.
 ## Example
 
 ```python
-from hive.backends.base import BaseBackend
-from hive.schema.experiment import ExperimentResult, ExperimentSpec
+from squid.backends.base import BaseBackend
+from squid.schema.experiment import ExperimentResult, ExperimentSpec
 
 class MyNewBackend(BaseBackend):
     def validate_inputs(self, inputs: dict) -> None:

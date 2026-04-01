@@ -3,8 +3,8 @@
 import pytest
 from datetime import datetime
 
-from hive.schema.finding import Finding, EvidenceNode
-from hive.schema.experiment import BackendJudgment, ExperimentResult, ExperimentSpec
+from squid.schema.finding import Finding, EvidenceNode
+from squid.schema.experiment import BackendJudgment, ExperimentResult, ExperimentSpec
 
 
 class TestFindingValidation:

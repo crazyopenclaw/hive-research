@@ -1,0 +1,13 @@
+"""ResearchSquid DAG — Neo4j graph operations."""
+
+# Lazy imports to avoid dependency chain issues
+# from squid.dag.client import DAGClient
+# from squid.dag.reader import ...
+# from squid.dag.writer import ...
+# from squid.dag.taxonomy import ...
+# from squid.dag.persona_store import ...
+
+# These are available via direct import:
+#   from squid.dag.client import DAGClient
+#   from squid.dag.taxonomy import classify_source_tier
+#   etc.

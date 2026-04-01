@@ -12,9 +12,9 @@ services:
 
   coordinator:
     volumes:
-      - ./hive:/app/hive
-    command: uvicorn hive.coordinator.app:app --host 0.0.0.0 --port 8000 --reload
+      - ./squid:/app/squid
+    command: uvicorn squid.coordinator.app:app --host 0.0.0.0 --port 8000 --reload
 
   workers:
     volumes:
-      - ./hive:/app/hive
+      - ./squid:/app/squid

@@ -1,4 +1,4 @@
 #!/bin/bash
 set -e
-echo "Starting HiveResearch Workers..."
-python -m hive.agents.tier1
+echo "Starting ResearchSquid Workers..."
+python -m squid.agents.tier1

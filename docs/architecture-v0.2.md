@@ -1,4 +1,4 @@
-# HiveResearch v0.2 — Architecture Updates
+# ResearchSquid v0.2 — Architecture Updates
 
 ## What Changed (MiroFish-Inspired Improvements)
 
@@ -131,7 +131,7 @@ Structured JSONL audit log per session. Events:
 | No source quality controls | ✅ Rejected | 4-tier taxonomy, numerical verification preserved |
 | Polling-everything architecture | ✅ Rejected | SSE streaming preferred |
 | Opaque agent reasoning | ✅ Rejected | Agent inspector exposes reasoning context |
-| Social simulation framing | ✅ Rejected | HiveResearch asks "what is true?", not "what will people do?" |
+| Social simulation framing | ✅ Rejected | ResearchSquid asks "what is true?", not "what will people do?" |
 | Theatrical persona roleplay | ✅ Rejected | Personas are research specializations, not characters |
 
 ---

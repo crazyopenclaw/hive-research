@@ -2,7 +2,7 @@
 
 import pytest
 
-from hive.backends.gpu_training.executor import GPUTrainingBackend
+from squid.backends.gpu_training.executor import GPUTrainingBackend
 
 
 def test_gpu_backend_exists():

@@ -3,7 +3,7 @@
     <!-- Header -->
     <header class="header">
       <div class="header-left">
-        <span class="brand" @click="$router.push('/')">HIVERESEARCH</span>
+        <span class="brand" @click="$router.push('/')">RESEARCHSQUID 🦑</span>
       </div>
       <div class="header-center">
         <WorkflowSteps :current="store.status.workflow_step" :labels="store.WORKFLOW_LABELS" />

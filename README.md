@@ -1,4 +1,4 @@
-# HiveResearch
+# ResearchSquid
 
 Two-tier autonomous research system. Tier 1 proposes. Tier 2 validates. DAG remembers.
 
@@ -22,19 +22,19 @@ curl -X POST localhost:8000/research \
 ## Use as a Library
 
 ```bash
-pip install hive-research
+pip install research-squid
 ```
 
 ```python
 from hive import Finding, ExperimentSpec, Session
-from hive.dag import post_finding, post_experiment_result
-from hive.coordinator import create_session
+from squid.dag import post_finding, post_experiment_result
+from squid.coordinator import create_session
 ```
 
 ## Use from Claude Code
 
 ```bash
-hive-mcp --transport stdio
+squid-mcp --transport stdio
 # Add to claude_code MCP config
 ```
 
@@ -42,7 +42,7 @@ hive-mcp --transport stdio
 
 ## Use from WhatsApp/Telegram
 
-Install OpenClaw, add hive-research skill. Message: "research cheaper alternative to acetaminophen"
+Install OpenClaw, add research-squid skill. Message: "research cheaper alternative to acetaminophen"
 
 ## Architecture
 
