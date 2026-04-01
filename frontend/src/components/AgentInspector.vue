@@ -64,6 +64,22 @@
               <option value="powerful">🧠 Powerful (best — Opus, o1)</option>
             </select>
           </div>
+          <div class="model-override">
+            <h5>Model Override (optional)</h5>
+            <div class="field-small">
+              <label>Model Name</label>
+              <input v-model="editModelName" placeholder="e.g. gpt-4o, claude-sonnet-4-5, qwen-plus" />
+            </div>
+            <div class="field-small">
+              <label>Provider URL</label>
+              <input v-model="editModelBaseUrl" placeholder="e.g. https://api.openai.com/v1" />
+            </div>
+            <div class="field-small">
+              <label>API Key</label>
+              <input v-model="editModelApiKey" type="password" placeholder="sk-..." />
+            </div>
+            <p class="hint">Leave empty to use tier defaults. Override to use a different provider per agent.</p>
+          </div>
           <button @click="savePersona" class="save-btn">Save Persona</button>
         </div>
       </div>
@@ -123,6 +139,9 @@ const editSourceStrict = ref(70)
 const editExperiment = ref(50)
 const editReporting = ref('concise')
 const editModelTier = ref('fast')
+const editModelName = ref('')
+const editModelBaseUrl = ref('')
+const editModelApiKey = ref('')
 
 onMounted(async () => {
   try { templates.value = (await api.getTemplates()).templates } catch {}
@@ -139,6 +158,9 @@ async function inspect() {
       editExperiment.value = Math.round(data.value.persona.experiment_appetite * 100)
       editReporting.value = data.value.persona.reporting_style
       editModelTier.value = data.value.persona.model_tier || 'fast'
+      editModelName.value = data.value.persona.model_name || ''
+      editModelBaseUrl.value = data.value.persona.model_base_url || ''
+      editModelApiKey.value = data.value.persona.model_api_key ? '••••••' : ''
     }
   } catch (e) { alert(e.message) }
   finally { loading.value = false }
@@ -146,14 +168,21 @@ async function inspect() {
 
 async function savePersona() {
   try {
-    const result = await api.setPersona(props.sessionId, agentId.value, {
+    const payload = {
       template: editTemplate.value || undefined,
       skepticism_level: editSkepticism.value / 100,
       source_strictness: editSourceStrict.value / 100,
       experiment_appetite: editExperiment.value / 100,
       reporting_style: editReporting.value,
       model_tier: editModelTier.value,
-    })
+      model_name: editModelName.value || undefined,
+      model_base_url: editModelBaseUrl.value || undefined,
+    }
+    // Only include API key if user changed it (not the masked placeholder)
+    if (editModelApiKey.value && editModelApiKey.value !== '••••••') {
+      payload.model_api_key = editModelApiKey.value
+    }
+    const result = await api.setPersona(props.sessionId, agentId.value, payload)
     data.value.persona = result.persona
     alert(`Persona saved (revision ${result.persona.revision})`)
   } catch (e) { alert(e.message) }
@@ -205,6 +234,12 @@ button:hover { background: #f5f5f5; }
 .model-tier-select { margin: 8px 0; }
 .model-tier-select label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #666; margin-bottom: 4px; }
 .model-tier-select select { width: 100%; padding: 6px; font-size: 11px; border: 1px solid #ccc; }
+.model-override { margin-top: 12px; padding-top: 8px; border-top: 1px solid #eee; }
+.model-override h5 { margin-top: 0; }
+.field-small { margin-bottom: 6px; }
+.field-small label { display: block; font-size: 9px; text-transform: uppercase; color: #999; margin-bottom: 2px; }
+.field-small input { width: 100%; padding: 4px 6px; font-size: 11px; border: 1px solid #ccc; font-family: monospace; }
+.hint { font-size: 9px; color: #999; font-style: italic; margin-top: 4px; }
 .finding-card, .exp-card { display: flex; gap: 6px; align-items: center; padding: 3px 0; font-size: 11px; }
 .conf-badge { font-family: monospace; font-size: 10px; padding: 1px 4px; }
 .conf-badge.high { background: #e8f5e9; color: #2e7d32; }

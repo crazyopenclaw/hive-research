@@ -28,11 +28,11 @@ class AgentPersona(BaseModel):
     experiment_appetite: float = Field(ge=0.0, le=1.0, default=0.5)  # tendency to propose experiments
     reporting_style: str = "concise"  # "concise" | "detailed" | "critical"
 
-    # Model selection — per-persona LLM tier
+    # Model selection — per-persona LLM config
     model_tier: Literal["fast", "balanced", "powerful"] = "fast"
-    # fast = cheapest (Haiku, GPT-4o-mini, Qwen-turbo)
-    # balanced = mid (Sonnet, GPT-4o, Qwen-plus)
-    # powerful = best (Opus, o1, Qwen-max)
+    model_name: Optional[str] = None  # Override: specific model name (e.g. "gpt-4o", "claude-sonnet-4-5")
+    model_base_url: Optional[str] = None  # Override: provider URL (e.g. "https://api.openai.com/v1")
+    model_api_key: Optional[str] = None  # Override: API key for this persona's provider
 
     # System fields (NOT editable)
     created_at: datetime = None
@@ -65,6 +65,34 @@ def resolve_model(tier: str) -> str:
     import os
     config = MODEL_TIERS.get(tier, MODEL_TIERS["fast"])
     return os.getenv(config["env_var"], config["default"])
+
+
+def resolve_persona_llm_config(persona: "AgentPersona") -> Dict[str, str]:
+    """
+    Resolve persona's LLM config with override priority:
+    persona.model_name > persona.model_tier resolved > global defaults
+
+    Returns: {model_name, base_url, api_key}
+    """
+    import os
+
+    # Model name: persona override > tier default > global default
+    if persona.model_name:
+        model = persona.model_name
+    else:
+        model = resolve_model(persona.model_tier)
+
+    # Base URL: persona override > global default
+    base_url = persona.model_base_url or os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
+
+    # API key: persona override > global default
+    api_key = persona.model_api_key or os.getenv("LLM_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
+
+    return {
+        "model_name": model,
+        "base_url": base_url,
+        "api_key": api_key,
+    }
 
 
 # Pre-built persona templates by domain

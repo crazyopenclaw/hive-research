@@ -372,6 +372,9 @@ def create_app() -> FastAPI:
         experiment_appetite: Optional[float] = None,
         reporting_style: Optional[str] = None,
         model_tier: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_base_url: Optional[str] = None,
+        model_api_key: Optional[str] = None,
     ):
         """Set or update agent persona. Only strategy fields are editable."""
         # Load existing from Neo4j
@@ -412,6 +415,15 @@ def create_app() -> FastAPI:
             if model_tier is not None:
                 revision_entry["changes"]["model_tier"] = (persona.model_tier, model_tier)
                 persona.model_tier = model_tier
+            if model_name is not None:
+                revision_entry["changes"]["model_name"] = (persona.model_name, model_name)
+                persona.model_name = model_name
+            if model_base_url is not None:
+                revision_entry["changes"]["model_base_url"] = (persona.model_base_url, model_base_url)
+                persona.model_base_url = model_base_url
+            if model_api_key is not None:
+                revision_entry["changes"]["model_api_key"] = ("***", "***")  # Don't log keys
+                persona.model_api_key = model_api_key
 
             persona.revision_history.append(revision_entry)
         else:
@@ -433,6 +445,12 @@ def create_app() -> FastAPI:
                 persona.reporting_style = reporting_style
             if model_tier is not None:
                 persona.model_tier = model_tier
+            if model_name is not None:
+                persona.model_name = model_name
+            if model_base_url is not None:
+                persona.model_base_url = model_base_url
+            if model_api_key is not None:
+                persona.model_api_key = model_api_key
 
         # Persist to Neo4j
         await save_persona(dag_client, persona)
