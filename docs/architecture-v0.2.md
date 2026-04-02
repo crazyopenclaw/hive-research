@@ -1,6 +1,6 @@
 # ResearchSquid v0.2 — Architecture Updates
 
-## What Changed (MiroFish-Inspired Improvements)
+## What Changed (UX & Observability Improvements)
 
 ### P1: Session Workflow + Real-Time Telemetry
 
@@ -121,9 +121,9 @@ Structured JSONL audit log per session. Events:
 
 ---
 
-## What Was Strictly NOT Taken from MiroFish
+## What We Intentionally Rejected
 
-| MiroFish Pattern | Rejected | Why |
+| Anti-Pattern | Rejected | Why |
 |---|---|---|
 | File-based IPC | ✅ Rejected | Fragile. All communication stays HTTP/event-based |
 | Zep Cloud for core graph | ✅ Rejected | Neo4j remains source of truth, self-hosted |
