@@ -3,13 +3,12 @@
     <div class="modal">
       <h3>Budget at 90%</h3>
       <p class="stats">
-        {{ budget.calls_used }} / {{ budget.calls_total }} LLM calls used<br>
-        ${{ budget.dollars_used.toFixed(2) }}<template v-if="budget.dollars_budget"> / ${{ budget.dollars_budget.toFixed(2) }}</template> spent<br>
-        {{ budget.tokens_used.toLocaleString() }} tokens used
+        ${{ (budget.dollars_used || 0).toFixed(2) }}<template v-if="budget.dollars_budget"> / ${{ budget.dollars_budget.toFixed(2) }}</template> spent<br>
+        {{ (budget.tokens_used || 0).toLocaleString() }} tokens used
       </p>
       <p>The research session has reached 90% of its budget. Would you like to continue?</p>
       <div class="actions">
-        <button class="btn" @click="continueSession">Add 100 more calls</button>
+        <button class="btn" @click="continueSession">Add $10 more budget</button>
         <button class="btn danger" @click="$emit('stop')">Stop Session</button>
       </div>
     </div>
@@ -26,7 +25,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'stop', 'continue'])
 
 function continueSession() {
-  emit('continue', { additional_budget: 100 })
+  emit('continue', { additional_budget: 10 })
 }
 </script>
 

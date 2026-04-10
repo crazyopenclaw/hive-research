@@ -31,8 +31,6 @@ export function useSessionStore() {
   const currentSessionId = ref('')
   const agentLabels = ref(createDefaultAgentLabels())
   const budget = ref({
-    calls_used: 0,
-    calls_total: 100,
     tokens_used: 0,
     dollars_used: 0,
     dollars_budget: 0,
@@ -81,8 +79,6 @@ export function useSessionStore() {
     overview.value = await api.getOverview(sessionId)
     if (overview.value?.budget) {
       budget.value = {
-        calls_used: overview.value.budget.calls_used || 0,
-        calls_total: overview.value.budget.calls_total || 500,
         tokens_used: overview.value.budget.tokens_used || 0,
         dollars_used: overview.value.budget.dollars_used || overview.value.budget.spent || 0,
         dollars_budget: overview.value.budget.dollars_budget || 0,
@@ -183,15 +179,12 @@ export function useSessionStore() {
 
     const kind = payload.kind || payload.type || 'event'
     if (kind === 'state_snapshot' || kind === 'STATE_SNAPSHOT') {
-      if (payload.llm_calls_used !== undefined) {
-        const budgetTotal = payload.budget_total || budget.value.calls_total
+      if (payload.dollars_used !== undefined || payload.llm_budget_usd !== undefined) {
         budget.value = {
-          calls_used: payload.llm_calls_used || 0,
-          calls_total: budgetTotal,
           tokens_used: payload.tokens_used || 0,
           dollars_used: payload.dollars_used || 0,
-          dollars_budget: payload.llm_budget_usd || budget.value.dollars_budget,
-          percentage: Math.round((payload.llm_calls_used / Math.max(1, budgetTotal)) * 100),
+          dollars_budget: payload.llm_budget_usd || payload.budget_total || budget.value.dollars_budget,
+          percentage: Math.round(((payload.dollars_used || 0) / Math.max(0.01, payload.llm_budget_usd || payload.budget_total || budget.value.dollars_budget || 1)) * 100),
           is_warning: payload.budget_warning || false,
         }
       }
@@ -199,11 +192,10 @@ export function useSessionStore() {
     if (kind === 'budget_warning' || kind === 'BUDGET_WARNING') {
       budget.value = {
         ...budget.value,
-        calls_used: payload.llm_calls_used || budget.value.calls_used,
-        calls_total: payload.budget_total || budget.value.calls_total,
-        tokens_used: payload.tokens_used || budget.value.tokens_used,
-        dollars_used: payload.dollars_used || budget.value.dollars_used,
-        percentage: payload.percentage || budget.value.percentage,
+        tokens_used: eventPayload.tokens_used || budget.value.tokens_used,
+        dollars_used: eventPayload.dollars_used || budget.value.dollars_used,
+        dollars_budget: eventPayload.llm_budget_usd || eventPayload.budget_total || budget.value.dollars_budget,
+        percentage: eventPayload.percentage || budget.value.percentage,
         is_warning: true,
       }
     }

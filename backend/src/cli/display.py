@@ -726,7 +726,7 @@ def display_event(event: Event) -> None:
             console.print(
                 Panel(
                     f"Iterations: {payload.get('iterations', 0)}\n"
-                    f"LLM calls: {payload.get('budget_used', 0)}",
+                    f"Spend: ${payload.get('budget_used', 0.0):.2f}",
                     title="Research Complete",
                     border_style="green",
                 )

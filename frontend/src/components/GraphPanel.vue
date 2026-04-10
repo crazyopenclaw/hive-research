@@ -5,6 +5,7 @@
         <h3>Research Graph</h3>
       </div>
       <div class="graph-controls">
+        <!-- Game mode toggle - disabled for now
         <button 
           @click="gameViewMode = !gameViewMode" 
           :class="{ active: gameViewMode }"
@@ -12,6 +13,7 @@
         >
           {{ gameViewMode ? 'Graph' : 'Game' }}
         </button>
+        -->
         <button @click="reportOpen = !reportOpen">
           {{ reportOpen ? 'Hide Report' : 'Report' }}
         </button>

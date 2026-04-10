@@ -25,7 +25,6 @@
     </div>
     <div class="top-bar-right">
       <div class="budget-display" :class="{ warning: budget.is_warning }">
-        <span class="llm-calls">{{ budget.calls_used }} / {{ budget.calls_total }} calls</span>
         <div class="budget-bar">
           <div class="budget-fill" :style="{ width: budget.percentage + '%' }" :class="{ warning: budget.percentage >= 90 }"></div>
         </div>
@@ -57,8 +56,6 @@ const props = defineProps({
   question: { type: String, default: '' },
   experiments: { type: Object, default: () => ({}) },
   budget: { type: Object, default: () => ({
-    calls_used: 0,
-    calls_total: 500,
     tokens_used: 0,
     dollars_used: 0,
     dollars_budget: 0,

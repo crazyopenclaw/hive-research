@@ -102,7 +102,6 @@ class InstituteState(TypedDict, total=False):
     budget_total: int
     
     # Enhanced budget tracking
-    llm_calls_used: int
     tokens_used: int
     dollars_used: float
     budget_warning: bool  # True when at 90% threshold

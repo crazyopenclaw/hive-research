@@ -54,7 +54,7 @@ def summarize_event(event: Event) -> tuple[str, str, str, str]:
         title = "Research completed"
         summary = (
             f"{payload.get('iterations', 0)} iterations, "
-            f"budget used {payload.get('budget_used', 0)}"
+            f"${payload.get('budget_used', 0.0):.2f} spent"
         )
     elif event.event_type == EventType.AGENT_SPAWNED:
         kind = "agent_spawned"

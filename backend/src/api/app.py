@@ -204,8 +204,7 @@ async def _build_overview(
             float(snapshot.get("budget_total", 0) or 0)
             - float(snapshot.get("budget_remaining", 0) or 0),
         )
-    llm_calls_used = int(snapshot.get("llm_calls_used", 0) or 0)
-    budget_total = int(snapshot.get("budget_total", 0) or 0)
+    budget_total = float(snapshot.get("budget_total", 0) or 0)
     tokens_used = int(snapshot.get("tokens_used", 0) or 0)
     budget_warning = bool(snapshot.get("budget_warning", False))
     llm_budget_usd = float(snapshot.get("llm_budget_usd", 0) or 0)
@@ -236,12 +235,10 @@ async def _build_overview(
             "spent": spent,
             "total": float(budget_total),
             "remaining": float(snapshot.get("budget_remaining", 0) or 0),
-            "calls_used": llm_calls_used,
-            "calls_total": budget_total,
             "tokens_used": tokens_used,
             "dollars_used": dollars_used,
             "dollars_budget": llm_budget_usd,
-            "percentage": round(llm_calls_used / max(1, budget_total) * 100, 1),
+            "percentage": round(dollars_used / max(0.01, llm_budget_usd) * 100, 1),
             "is_warning": budget_warning,
         },
         "agents": {

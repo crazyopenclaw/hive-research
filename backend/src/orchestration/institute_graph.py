@@ -111,32 +111,32 @@ class InstituteGraphBuilder:
     def _update_budget_state(
         self,
         state: InstituteState,
-        calls_delta: int = 1,
     ) -> dict[str, Any]:
         """
         Update budget tracking fields from LLM usage data.
 
         This method:
-        1. Increments LLM call count
-        2. Adds token usage from the LLM client
-        3. Adds dollar cost from the LLM client
-        4. Checks for 90% threshold and sets budget_warning flag
-        5. Emits BUDGET_WARNING event if crossing threshold
+        1. Adds token usage from the LLM client
+        2. Adds dollar cost from the LLM client
+        3. Checks for 90% threshold and sets budget_warning flag
+        4. Emits BUDGET_WARNING event if crossing threshold
 
         Args:
             state: Current institute state
-            calls_delta: Number of LLM calls to add (default 1)
 
         Returns:
             Dict with updated budget fields to merge into state
         """
-        llm_calls_used = state.get("llm_calls_used", 0) + calls_delta
         tokens_used = state.get("tokens_used", 0) + self._llm.total_tokens
         dollars_used = state.get("dollars_used", 0.0) + self._llm.total_cost
+        
+        # Connect user's dollar budget
+        llm_budget_usd = float(state["llm_budget_usd"])
         budget_total = state.get("budget_total", self._config.default_budget)
 
         budget_warning = state.get("budget_warning", False)
-        usage_ratio = llm_calls_used / max(1, budget_total)
+        # Use dollars instead of calls for tracking usage_ratio
+        usage_ratio = dollars_used / max(0.01, llm_budget_usd)
 
         if usage_ratio >= 0.9 and not budget_warning:
             budget_warning = True
@@ -145,22 +145,24 @@ class InstituteGraphBuilder:
                 event_type=EventType.BUDGET_WARNING,
                 session_id=state.get("session_id", ""),
                 payload={
-                    "llm_calls_used": llm_calls_used,
-                    "budget_total": budget_total,
+                    "budget_total": llm_budget_usd,
                     "tokens_used": tokens_used,
                     "dollars_used": dollars_used,
+                    "llm_budget_usd": llm_budget_usd,
                     "percentage": round(usage_ratio * 100, 1),
                 },
             )))
 
-        budget_remaining = state.get("budget_remaining", budget_total) - calls_delta
+        # Track remaining budget in dollars
+        budget_remaining = max(0.0, llm_budget_usd - dollars_used)
 
         return {
-            "budget_remaining": max(0, budget_remaining),
-            "llm_calls_used": llm_calls_used,
+            "budget_total": llm_budget_usd,
+            "budget_remaining": budget_remaining,
             "tokens_used": tokens_used,
             "dollars_used": dollars_used,
             "budget_warning": budget_warning,
+            "llm_budget_usd": llm_budget_usd,
         }
 
     def build(self) -> Any:
@@ -213,7 +215,8 @@ class InstituteGraphBuilder:
         """Initialize a new research session."""
         session_id = state.get("session_id") or uuid4().hex[: self._config.session_id_length]
 
-        self._llm.reset_usage()
+        # Connect user's dollar budget
+        llm_budget_usd = float(state["llm_budget_usd"])
 
         await self._bus.publish(Event(
             event_type=EventType.RESEARCH_STARTED,
@@ -227,11 +230,11 @@ class InstituteGraphBuilder:
             payload={
                 "question": state.get("research_question", ""),
                 "num_agents": state.get("num_agents", self._config.default_agents),
-                "budget_total": state.get("budget_total", self._config.default_budget),
-                "budget_remaining": state.get("budget_total", self._config.default_budget),
-                "llm_calls_used": 0,
+                "budget_total": llm_budget_usd,
+                "budget_remaining": llm_budget_usd,
                 "tokens_used": 0,
                 "dollars_used": 0.0,
+                "llm_budget_usd": llm_budget_usd,
                 "budget_warning": False,
                 "max_iterations": state.get("max_iterations", self._config.default_iterations),
                 "iteration": 0,
@@ -242,10 +245,9 @@ class InstituteGraphBuilder:
         return {
             "session_id": session_id,
             "iteration": 0,
-            "budget_remaining": state.get(
-                "budget_total", self._config.default_budget
-            ),
-            "llm_calls_used": 0,
+            "budget_total": llm_budget_usd,
+            "budget_remaining": llm_budget_usd,
+            "llm_budget_usd": llm_budget_usd,
             "tokens_used": 0,
             "dollars_used": 0.0,
             "budget_warning": False,
@@ -290,7 +292,7 @@ class InstituteGraphBuilder:
         ))
         return {
             **result,
-            **self._update_budget_state(state, calls_delta=1),
+            **self._update_budget_state(state),
         }
 
     async def _spawn_squids(
@@ -600,8 +602,7 @@ class InstituteGraphBuilder:
                     },
                 ))
 
-        calls_delta = len(active_agents) + len(pending)
-        budget_updates = self._update_budget_state(state, calls_delta=calls_delta)
+        budget_updates = self._update_budget_state(state)
 
         return {
             "agents": updated_agents,
@@ -664,7 +665,7 @@ class InstituteGraphBuilder:
     ) -> dict[str, Any]:
         """Run the Controller to evaluate progress."""
         result = await self._controller.evaluate(state)
-        budget_updates = self._update_budget_state(state, calls_delta=1)
+        budget_updates = self._update_budget_state(state)
         await self._bus.publish(Event(
             event_type=EventType.STATE_SNAPSHOT,
             session_id=state.get("session_id", ""),
@@ -674,7 +675,6 @@ class InstituteGraphBuilder:
                 "should_stop": result.get("should_stop", False),
                 "iteration": state.get("iteration", 0),
                 "budget_remaining": budget_updates["budget_remaining"],
-                "llm_calls_used": budget_updates["llm_calls_used"],
                 "tokens_used": budget_updates["tokens_used"],
                 "dollars_used": budget_updates["dollars_used"],
                 "budget_warning": budget_updates["budget_warning"],
@@ -773,7 +773,7 @@ class InstituteGraphBuilder:
             max_tokens=self._config.max_tokens_briefing,
         )
 
-        budget_updates = self._update_budget_state(state, calls_delta=1)
+        budget_updates = self._update_budget_state(state)
 
         return {
             "iteration_summary": briefing,
