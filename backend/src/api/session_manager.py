@@ -332,14 +332,15 @@ class SessionManager:
         question = str(payload.get("question") or "").strip()
         created_at = utc_now_iso()
         llm_budget_usd = payload.get("llm_budget_usd") or payload.get("budget") or 0
+        initial_budget_usd = llm_budget_usd or self._config.default_budget_usd
         state = {
             "config": payload,
             "snapshot": {
                 "question": question,
                 "status": "starting",
                 "iteration": 0,
-                "budget_total_usd": self._config.default_budget_usd,
-                "budget_remaining_usd": self._config.default_budget_usd,
+                "budget_total_usd": initial_budget_usd,
+                "budget_remaining_usd": initial_budget_usd,
                 "llm_budget_usd": llm_budget_usd,
                 "num_agents": payload.get("agent_count") or payload.get("num_agents") or 0,
             },
@@ -413,7 +414,7 @@ class SessionManager:
                 question=question,
                 sources=payload.get("sources") or [],
                 num_agents=payload.get("agent_count") or payload.get("num_agents"),
-                budget=payload.get("llm_budget_usd") or payload.get("budget"),
+                budget_usd=payload.get("llm_budget_usd") or payload.get("budget"),
                 max_iterations=payload.get("max_iterations"),
                 session_id=session_id,
             )

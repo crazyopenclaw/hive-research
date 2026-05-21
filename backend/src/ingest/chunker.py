@@ -3,7 +3,10 @@ Semantic text chunking for RAG retrieval.
 
 Splits extracted text into chunks sized for embedding (512–1024 tokens).
 Uses sentence-aware splitting to avoid cutting mid-thought.
+Respects [TABLE]...[/TABLE] blocks as atomic units.
 """
+
+import re
 
 from src.models.source import SourceChunk
 
@@ -119,12 +122,24 @@ def _split_sentences(text: str) -> list[str]:
 
     Handles common sentence terminators (.!?) while avoiding
     false splits on abbreviations and decimal numbers.
+    Preserves [TABLE]...[/TABLE] blocks as single atomic units.
     """
-    import re
+    # First, extract [TABLE] blocks and replace with placeholders
+    table_blocks: list[str] = []
+    def _replace_table(match: re.Match) -> str:
+        table_blocks.append(match.group(0))
+        return f"__TABLE_PLACEHOLDER_{len(table_blocks) - 1}__"
+
+    text_with_placeholders = re.sub(
+        r'\[TABLE\].*?\[/TABLE\]',
+        _replace_table,
+        text,
+        flags=re.DOTALL,
+    )
 
     # Split on sentence-ending punctuation followed by whitespace and uppercase
     # This avoids splitting on "Dr." or "3.14"
-    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text)
+    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text_with_placeholders)
 
     # Also split on double newlines (paragraph boundaries)
     result: list[str] = []
@@ -133,6 +148,10 @@ def _split_sentences(text: str) -> list[str]:
         for part in parts:
             cleaned = part.strip()
             if cleaned:
+                # Restore table placeholders
+                for i, table in enumerate(table_blocks):
+                    placeholder = f"__TABLE_PLACEHOLDER_{i}__"
+                    cleaned = cleaned.replace(placeholder, table)
                 result.append(cleaned)
 
     return result

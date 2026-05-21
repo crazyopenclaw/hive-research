@@ -64,6 +64,12 @@ class PDFIngestor:
         for page_num in range(len(doc)):
             page = doc[page_num]
             text = page.get_text("text")
+
+            # Extract tables as markdown (preserves structure)
+            table_md = _extract_tables_as_markdown(page)
+            if table_md:
+                text = text.strip() + "\n\n" + table_md if text.strip() else table_md
+
             if text.strip():
                 pages.append({
                     "page_number": str(page_num + 1),
@@ -94,6 +100,49 @@ class PDFIngestor:
 
         doc.close()
         return source, pages
+
+
+def _extract_tables_as_markdown(page: "fitz.Page") -> str:
+    """Extract tables from a PDF page and render as markdown.
+
+    Uses PyMuPDF's find_tables() when available. Tables are wrapped
+    with [TABLE] markers so the chunker can keep them atomic.
+    """
+    if not _HAS_PYMUPDF:
+        return ""
+    try:
+        tables = page.find_tables()
+    except (AttributeError, Exception):
+        # find_tables() not available in older PyMuPDF versions
+        return ""
+
+    if not tables or not tables.tables:
+        return ""
+
+    parts = []
+    for table in tables.tables:
+        try:
+            data = table.extract()
+            if not data or len(data) < 2:
+                continue
+
+            # Build markdown table
+            headers = [str(cell or "").strip() for cell in data[0]]
+            if not any(headers):
+                continue
+
+            md_lines = ["[TABLE]"]
+            md_lines.append("| " + " | ".join(headers) + " |")
+            md_lines.append("| " + " | ".join("---" for _ in headers) + " |")
+            for row in data[1:]:
+                cells = [str(cell or "").strip() for cell in row]
+                md_lines.append("| " + " | ".join(cells) + " |")
+            md_lines.append("[/TABLE]")
+            parts.append("\n".join(md_lines))
+        except Exception:
+            continue
+
+    return "\n\n".join(parts)
 
 
 def _extract_title(pages: list[dict[str, str]]) -> str:

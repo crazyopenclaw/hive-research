@@ -277,5 +277,33 @@ class RAGRetriever:
             except Exception:
                 pass  # Graceful degradation — graph enrichment is optional
 
+        # Enrich source chunks with parent Source metadata (title, URI)
+        if "source_chunk" in grouped:
+            await self._enrich_chunks_with_source_metadata(grouped["source_chunk"])
+
         return grouped
+
+    async def _enrich_chunks_with_source_metadata(
+        self,
+        chunks: list[dict[str, Any]],
+    ) -> None:
+        """Add parent Source title and URI to each source chunk via HAS_CHUNK edge."""
+        for chunk in chunks:
+            chunk_id = chunk.get("artifact_id") or chunk.get("id")
+            if not chunk_id or chunk.get("source_title"):
+                continue
+            try:
+                parents = await self._graph.get_neighbors(
+                    chunk_id,
+                    edge_type="HAS_CHUNK",
+                    direction="incoming",
+                    limit=1,
+                )
+                if parents:
+                    parent = parents[0]
+                    chunk["source_title"] = parent.get("title", "")
+                    chunk["source_uri"] = parent.get("uri", "")
+                    chunk["source_type"] = parent.get("source_type", "")
+            except Exception:
+                pass  # Graceful — attribution is best-effort
 

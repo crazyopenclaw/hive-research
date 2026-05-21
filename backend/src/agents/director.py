@@ -21,8 +21,9 @@ from src.llm.prompts import (
     DIRECTOR_SYSTEM,
     DIRECTOR_DECOMPOSE,
     DIRECTOR_DESIGN_ARCHETYPES,
+    MENTOR_EVALUATE,
 )
-from src.models.agent_state import InstituteState, Subproblem
+from src.models.agent_state import InstituteState, Subproblem, MentorVerdict
 from src.models.archetype import Archetype, parse_archetypes_from_llm
 from src.models.events import Event, EventType
 
@@ -31,6 +32,8 @@ class DirectorOutput(BaseModel):
     """Structured output from the Director's decomposition."""
 
     subproblems: list[dict[str, Any]] = Field(default_factory=list)
+    pipeline_mode: str = Field(default="deep_research")
+    pipeline_reasoning: str = ""
     open_questions: list[str] = Field(default_factory=list)
     key_assumptions: list[str] = Field(default_factory=list)
     reasoning_summary: str = ""
@@ -44,6 +47,13 @@ class DirectorOutput(BaseModel):
     @classmethod
     def _coerce_list_fields(cls, value: Any) -> list[Any]:
         return _coerce_json_list(value)
+
+    @field_validator("pipeline_mode", mode="before")
+    @classmethod
+    def _coerce_pipeline_mode(cls, value: Any) -> str:
+        if value in ("deep_research", "focused_extraction"):
+            return value
+        return "deep_research"
 
 
 class ArchetypeOutput(BaseModel):
@@ -166,6 +176,7 @@ class DirectorAgent:
                 question=sp.get("question", ""),
                 priority=sp.get("priority", len(subproblems) + 1),
                 success_criteria=sp.get("success_criteria", ""),
+                research_strategy=sp.get("research_strategy", ""),
                 assigned_agent=[],  # Filled in by spawn_squids
             ))
 
@@ -208,6 +219,7 @@ class DirectorAgent:
         return {
             "subproblems": subproblems,
             "archetypes": [a.model_dump() for a in archetypes],
+            "pipeline_mode": result.pipeline_mode,
             "open_questions": result.open_questions,
             "key_assumptions": result.key_assumptions,
         }
@@ -309,3 +321,73 @@ class DirectorAgent:
                 existing.append(default)
 
         return existing
+
+    async def evaluate_progress(
+        self,
+        squid_id: str,
+        subproblem: Subproblem,
+        observations: list[dict],
+        team_progress: str,
+        hindsight_context: str,
+        step_count: int,
+        budget_spent: float,
+        budget_total: float,
+        research_question: str,
+    ) -> MentorVerdict:
+        """Evaluate a squid's research progress and decide: continue, redirect, or stop.
+
+        Called every `mentor_check_interval` ReAct steps. Uses the fast model
+        for cost efficiency. Has access to cross-agent progress and institutional
+        memory via Hindsight.
+        """
+        obs_lines = []
+        for i, o in enumerate(observations[-6:]):
+            obs_lines.append(
+                f"Step {i+1}: {o.get('action_type', '?')} "
+                f"— {o.get('result_summary', 'No summary')}"
+            )
+        observations_text = "\n".join(obs_lines) if obs_lines else "No observations yet."
+
+        prompt = MENTOR_EVALUATE.format(
+            research_question=research_question,
+            subproblem=subproblem.get("question", ""),
+            success_criteria=subproblem.get("success_criteria", ""),
+            research_strategy=subproblem.get("research_strategy", ""),
+            step_count=step_count,
+            budget_spent=budget_spent,
+            budget_total=budget_total,
+            observations_summary=observations_text,
+            key_findings_summary="",
+            team_progress_summary=team_progress or "No other researcher progress available.",
+            hindsight_section=hindsight_context or "No session history available.",
+        )
+
+        try:
+            result = await self._llm.complete_structured(
+                prompt=prompt,
+                response_model=MentorVerdict,
+                system=DIRECTOR_SYSTEM,
+                temperature=self._config.temperature_default_structured,
+                model_override=self._config.fast_model or None,
+            )
+        except Exception as exc:
+            logger.warning("Mentor evaluation failed, defaulting to continue: %s", exc)
+            return MentorVerdict(
+                action="continue",
+                reasoning=f"Mentor evaluation failed: {exc}",
+                direction="",
+            )
+
+        await self._bus.publish(Event(
+            event_type=EventType.AGENT_ACTION,
+            agent_id="director",
+            payload={
+                "action": "mentor_evaluate",
+                "squid_id": squid_id,
+                "verdict": result.action,
+                "reasoning": result.reasoning[:200],
+                "step_count": step_count,
+            },
+        ))
+
+        return result

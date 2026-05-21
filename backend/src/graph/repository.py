@@ -267,6 +267,43 @@ class GraphRepository:
 
         return relation.id
 
+    # ── Graph traversal ───────────────────────────────────────────────
+
+    async def get_neighbors(
+        self,
+        node_id: str,
+        edge_type: str,
+        direction: str = "outgoing",
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """
+        Fetch neighboring nodes connected by a specific edge type.
+
+        Args:
+            node_id: The starting node ID.
+            edge_type: The relationship type to traverse.
+            direction: "outgoing", "incoming", or "both".
+            limit: Max number of neighbors to return.
+
+        Returns:
+            List of neighbor node property dicts.
+        """
+        if direction == "incoming":
+            pattern = f"(neighbor)-[:{edge_type}]->(n)"
+        elif direction == "both":
+            pattern = f"(neighbor)-[:{edge_type}]-(n)"
+        else:
+            pattern = f"(n)-[:{edge_type}]->(neighbor)"
+
+        query = (
+            f"MATCH {pattern} WHERE n.id = $id "
+            f"RETURN neighbor LIMIT $limit"
+        )
+        async with self._conn.session() as session:
+            result = await session.run(query, id=node_id, limit=limit)
+            records = await result.data()
+            return [dict(r["neighbor"]) for r in records]
+
     # ── Source-specific helpers ───────────────────────────────────────
 
     async def link_chunk_to_source(

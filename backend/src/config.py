@@ -44,7 +44,18 @@ class Settings(BaseSettings):
         default="gpt-4o",
         validation_alias=AliasChoices("OPENAI_MODEL", "LLM_MODEL_NAME"),
     )
-    embedding_model: str = "text-embedding-3-small"
+    embedding_model: str = Field(
+        default="text-embedding-3-small",
+        validation_alias=AliasChoices("EMBEDDING_MODEL"),
+    )
+    embedding_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("EMBEDDING_API_KEY", "OPENAI_API_KEY"),
+    )
+    embedding_api_base: str = Field(
+        default="https://api.openai.com/v1",
+        validation_alias=AliasChoices("EMBEDDING_API_BASE"),
+    )
     embedding_dimension: int = 1536
 
     # Per-tier model selection
@@ -84,7 +95,7 @@ class Settings(BaseSettings):
     max_tokens_adjudicator: int = 256
     max_tokens_counter_response: int = 512
     max_tokens_briefing: int = 512
-    max_tokens_synthesizer: int = 4096
+    max_tokens_synthesizer: int = 12288
     max_tokens_retry_cap: int = 16384
     max_retries_structured: int = 2
     llm_retry_token_multiplier: int = 2
@@ -103,6 +114,10 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
     search_max_results: int = 5
     squid_search_max_results: int = 3
+    squid_deep_fetch_max: int = 2  # Max URLs to deep-fetch per search
+
+    # Mentor-gated ReAct loop
+    mentor_check_interval: int = 3  # Director evaluates squid progress every N steps
 
     # Sandbox
     sandbox_image: str = "squid-sandbox:latest"

@@ -218,9 +218,9 @@ def research(
         settings.default_agents, "--agents", "-a",
         help="Number of squid agents to spawn.",
     ),
-    budget: int = typer.Option(
-        settings.default_budget, "--budget", "-b",
-        help="Maximum LLM calls allowed.",
+    budget: float = typer.Option(
+        settings.default_budget_usd, "--budget", "-b",
+        help="Maximum LLM budget in USD.",
     ),
     iterations: int = typer.Option(
         settings.default_iterations, "--iterations", "-i",
@@ -238,7 +238,7 @@ def research(
         try:
             _preflight_local_services()
             await service.initialize()
-            console.print(f"\n[dim]Budget: {budget} calls | Agents: {agents} | Max iterations: {iterations}[/]\n")
+            console.print(f"\n[dim]Budget: ${budget:.2f} | Agents: {agents} | Max iterations: {iterations}[/]\n")
 
             start_display()
 
@@ -246,7 +246,7 @@ def research(
                 question=question,
                 sources=sources or [],
                 num_agents=agents,
-                budget=budget,
+                budget_usd=budget,
                 max_iterations=iterations,
             )
 

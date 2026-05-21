@@ -9,9 +9,11 @@ SquidState tracks an individual line of inquiry assigned to a
 Squid agent, including its persona for behavioral customization.
 """
 
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 
 from langgraph.graph import add_messages
+
+from pydantic import BaseModel, Field
 
 
 class Subproblem(TypedDict):
@@ -21,6 +23,7 @@ class Subproblem(TypedDict):
     question: str
     priority: int  # 1 = highest
     success_criteria: str
+    research_strategy: str  # LLM-generated guidance on how to research this subproblem
     assigned_agent: list[str]  # agent_ids
 
 
@@ -123,6 +126,9 @@ class InstituteState(TypedDict, total=False):
     # Coverage tracking — how much of each subproblem is addressed
     coverage: dict[str, float]  # subproblem_id → 0.0–1.0
 
+    # Pipeline mode — set by Director
+    pipeline_mode: str  # "deep_research" or "focused_extraction"
+
     # Controller decisions
     should_stop: bool
     controller_directives: list[str]
@@ -174,3 +180,80 @@ class SquidState(TypedDict, total=False):
     findings_created: list[str]
     relations_created: list[str]
     messages_sent: list[str]
+
+    # ReAct loop state
+    research_question: str  # Full research question for mentor context
+    observations: list[dict[str, Any]]  # Accumulated observations from ReAct steps
+    step_count: int  # Current ReAct step number within this invocation
+
+
+class SquidAction(BaseModel):
+    """Single action decision from a ReAct think step."""
+
+    action_type: Literal["search", "fetch", "read", "produce"] = Field(
+        description="What to do next: search for information, fetch a specific URL, read an artifact in detail, or produce final findings"
+    )
+    reasoning: str = Field(
+        description="Brief explanation of why this action was chosen"
+    )
+    query: str = Field(
+        default="",
+        description="Search query if action_type=search"
+    )
+    source: Literal["tavily", "arxiv"] = Field(
+        default="tavily",
+        description="Search source if action_type=search"
+    )
+    url: str = Field(
+        default="",
+        description="URL to fetch if action_type=fetch"
+    )
+    artifact_id: str = Field(
+        default="",
+        description="Artifact ID to read in detail if action_type=read"
+    )
+    has_critical_gaps: bool = Field(
+        default=False,
+        description="Only for produce: are there gaps you couldn't fill?"
+    )
+    gap_description: str = Field(
+        default="",
+        description="Only for produce: description of remaining gaps"
+    )
+
+
+class SquidObservation(BaseModel):
+    """Result of executing a ReAct action."""
+
+    action_type: str = Field(
+        description="The action type that was executed"
+    )
+    query_or_url: str = Field(
+        description="The search query or URL that was used"
+    )
+    result_summary: str = Field(
+        description="LLM-readable summary of what was found"
+    )
+    source_ids: list[str] = Field(
+        default_factory=list,
+        description="Source node IDs created by this action"
+    )
+    key_data_points: list[str] = Field(
+        default_factory=list,
+        description="Specific facts or data points extracted"
+    )
+
+
+class MentorVerdict(BaseModel):
+    """Director's evaluation of a squid's research progress."""
+
+    action: Literal["continue", "redirect", "stop"] = Field(
+        description="Whether the researcher should continue, be redirected, or stop and produce findings"
+    )
+    reasoning: str = Field(
+        description="Brief explanation of the verdict"
+    )
+    direction: str = Field(
+        default="",
+        description="Specific new direction if action=redirect (empty otherwise)"
+    )

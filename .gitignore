@@ -25,4 +25,5 @@ backend/graphify-out/*
 backend/graphify-out/cache/*
 .opencode/*
 graphify-out/GRAPH_REPORT.md
-benchmarks/draco/results/20260411_200003/responses.jsonl
+benchmarks/draco/results/*
+graphify-out/*

@@ -51,6 +51,13 @@ class LLMClient:
             api_key=self._config.openai_api_key,
             base_url=self._config.openai_api_base,
         )
+        # Separate client for embeddings — OpenRouter and similar proxies
+        # often don't support the embeddings endpoint, so we route those
+        # directly to the OpenAI API (or a dedicated embedding endpoint).
+        self._embed_client = AsyncOpenAI(
+            api_key=self._config.embedding_api_key or self._config.openai_api_key,
+            base_url=self._config.embedding_api_base,
+        )
         self._model = self._config.openai_model
         self._call_count = 0
         self._total_tokens = 0
@@ -423,7 +430,7 @@ class LLMClient:
             List of embedding vectors, one per input text.
         """
         logger.debug(f"Generating embeddings for {len(texts)} texts using {self._config.embedding_model}")
-        response = await self._client.embeddings.create(
+        response = await self._embed_client.embeddings.create(
             model=self._config.embedding_model,
             input=texts,
         )

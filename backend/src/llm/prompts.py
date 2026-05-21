@@ -31,16 +31,25 @@ Guidelines:
 
 DIRECTOR_DECOMPOSE = """Research Question: {research_question}
 
-Decompose this into subproblems. Respond with valid JSON matching this schema:
+Decompose this into subproblems. Also decide the pipeline mode and provide research strategy per subproblem.
+
+Pipeline modes:
+- "deep_research": Full multi-agent debate cycle. Use for questions with contested claims, multiple competing perspectives, or requiring analytical depth.
+- "focused_extraction": Lightweight pipeline — skip debate, focus on finding and extracting specific facts from authoritative sources. Use for questions requiring precise data points, specific numbers, product specifications, or factual lookups.
+
+Respond with valid JSON matching this schema:
 {{
   "subproblems": [
     {{
       "id": "sp-1",
       "question": "the subproblem question",
       "priority": 1,
-      "success_criteria": "what a good answer looks like"
+      "success_criteria": "what a good answer looks like",
+      "research_strategy": "What sources to seek, what format the answer needs, what domain expertise applies. Be specific: name document types (10-Q filings, spec sheets, clinical guidelines), databases, or source categories."
     }}
   ],
+  "pipeline_mode": "deep_research",
+  "pipeline_reasoning": "why this mode was chosen",
   "reasoning_summary": "1-2 sentence public explanation of how you decomposed the question",
   "open_questions": ["any meta-questions about the research scope"],
   "key_assumptions": ["assumptions embedded in the original question"]
@@ -125,11 +134,21 @@ Your line of inquiry: {line_of_inquiry}
 
 Produce your analysis. Even if no source material is available yet, use your domain knowledge to:
 - Write notes capturing key facts and observations relevant to your inquiry
+- Extract key_facts: precise, verifiable factual claims with specific values, units, and source attribution
 - State assumptions you are making explicitly
 - Form at least one testable hypothesis
 - Propose at least one experiment (Python code using numpy/pandas/scipy/sklearn)
 - If other agents have hypotheses, create relations to them (supports/contradicts/extends)
 - Request arxiv or web searches to find evidence for your hypotheses
+
+When constructing search queries:
+- Be specific: include entity names, dates, document types (e.g., "Acadia Realty Trust 10-Q Q1 2024")
+- For financial analysis: search for SEC filings, annual reports, earnings transcripts
+- For product comparisons: search manufacturer official sites and specifications
+- For academic topics: use arxiv for papers, tavily for surveys and reviews
+- For medical/health: search clinical guidelines, peer-reviewed journals, official health organizations
+- Prefer primary sources over news articles or blog posts
+- If your first search didn't find what you need, refine the query with more specific terms
 
 You MUST produce at least 1 note, 1 hypothesis, and 1 search query every cycle. Do NOT return empty lists.
 
@@ -188,7 +207,150 @@ Respond with valid JSON:
       "source": "tavily|arxiv",
       "reason": "why this search would help"
     }}
+  ],
+  "key_facts": [
+    {{
+      "claim": "specific factual assertion with precise value",
+      "value": "the exact number, measurement, or data point",
+      "source_chunk_ids": ["chunk-ids-that-support-this"],
+      "confidence": 0.9
+    }}
   ]
+}}"""
+
+# ── Squid ReAct Think ─────────────────────────────────────────────
+
+SQUID_THINK = """You are {agent_name}, a research agent investigating:
+{line_of_inquiry}
+
+=== YOUR SUBPROBLEM ===
+{subproblem}
+
+=== SUCCESS CRITERIA ===
+{success_criteria}
+
+=== RESEARCH STRATEGY ===
+{research_strategy}
+
+=== CONTEXT SO FAR ===
+{context_section}
+
+=== YOUR OBSERVATIONS THIS CYCLE ===
+{observations_section}
+
+Step {step_number}. Based on all the context and observations above, decide your next action.
+
+If you have found sufficient evidence to produce findings, choose "produce".
+If you need more information, choose "search" or "fetch".
+If a specific artifact or source chunk deserves deeper examination, choose "read".
+
+Be strategic: don't search for something you already found. Don't produce prematurely if key gaps remain.
+
+Respond with valid JSON:
+{{
+  "action_type": "search|fetch|read|produce",
+  "reasoning": "brief explanation of why this action",
+  "query": "search query if action_type=search (empty otherwise)",
+  "source": "tavily|arxiv",
+  "url": "URL to fetch if action_type=fetch (empty otherwise)",
+  "artifact_id": "artifact ID if action_type=read (empty otherwise)",
+  "has_critical_gaps": true/false (only meaningful for produce — are there gaps you couldn't fill?),
+  "gap_description": "description of remaining gaps if has_critical_gaps=true (empty otherwise)"
+}}"""
+
+# ── Mentor Evaluation ─────────────────────────────────────────────
+
+MENTOR_EVALUATE = """You are the Research Director evaluating a researcher's progress.
+
+RESEARCH QUESTION: {research_question}
+
+THIS RESEARCHER'S SUBPROBLEM: {subproblem}
+SUCCESS CRITERIA: {success_criteria}
+RESEARCH STRATEGY: {research_strategy}
+
+STEPS TAKEN: {step_count}
+BUDGET: ${budget_spent:.2f} spent of ${budget_total:.2f} total
+
+THIS RESEARCHER'S OBSERVATIONS:
+{observations_summary}
+
+KEY FINDINGS SO FAR:
+{key_findings_summary}
+
+WHAT OTHER RESEARCHERS HAVE FOUND:
+{team_progress_summary}
+
+SESSION HISTORY (from institutional memory):
+{hindsight_section}
+
+Based on the above, should this researcher continue, be redirected, or stop and produce findings?
+
+Consider:
+- Is this researcher finding NEW, relevant information? (not re-hashing)
+- Is this researcher approaching the success criteria?
+- Are other researchers already covering what this one is searching for?
+- Is the remaining budget worth what this researcher is likely to find?
+- Has this researcher been unproductive for multiple evaluation cycles?
+
+Respond with valid JSON:
+{{
+  "action": "continue|redirect|stop",
+  "reasoning": "brief explanation",
+  "direction": "specific new direction if redirecting (empty string if not redirecting)"
+}}"""
+
+# ── Squid ReAct Produce ───────────────────────────────────────────
+
+SQUID_PRODUCE = """You are {agent_name}, producing final findings for your line of inquiry.
+
+=== YOUR SUBPROBLEM ===
+{subproblem}
+
+=== SUCCESS CRITERIA ===
+{success_criteria}
+
+=== RESEARCH STRATEGY ===
+{research_strategy}
+
+=== ALL GATHERED EVIDENCE ===
+{context_section}
+
+=== YOUR OBSERVATIONS THIS CYCLE ===
+{observations_section}
+
+=== EXISTING WORK FROM OTHER AGENTS ===
+{existing_work}
+
+=== INSTITUTE BRIEFING ===
+{briefing_section}
+
+=== AGENT WORKING MEMORY ===
+{memory_section}
+
+Based on ALL evidence and observations, produce your research findings.
+
+You MUST produce at least 1 note, 1 hypothesis, and 1 search query.
+When constructing search queries:
+- Be specific: include entity names, dates, document types (e.g., "Acadia Realty Trust 10-Q Q1 2024")
+- For financial analysis: search for SEC filings, annual reports, earnings transcripts
+- For product comparisons: search manufacturer official sites and specifications
+- For academic topics: use arxiv for papers, tavily for surveys and reviews
+- For medical/health: search clinical guidelines, peer-reviewed journals, official health organizations
+- Prefer primary sources over news articles or blog posts
+- If your first search didn't find what you need, refine the query with more specific terms
+
+Extract key_facts: precise, verifiable factual claims with specific values, units, and source attribution.
+
+Respond with valid JSON:
+{{
+  "notes": [{{"text": "...", "source_chunk_ids": [], "confidence": 0.8}}],
+  "assumptions": [{{"text": "...", "basis": "...", "strength": "moderate"}}],
+  "hypotheses": [{{"text": "...", "supporting_evidence": [], "testable": true, "confidence": 0.6}}],
+  "relations": [{{"source_artifact_id": "...", "target_artifact_id": "...", "relation_type": "supports|contradicts|extends", "reasoning": "..."}}],
+  "experiment_proposals": [{{"hypothesis_id": "...", "code": "...", "expected_outcome": "...", "timeout_seconds": 60}}],
+  "messages": [{{"to_agent": "...", "text": "...", "message_type": "question|counter|suggestion|dependency_warning", "regarding_artifact_id": "..."}}],
+  "search_queries": [{{"query": "...", "source": "tavily|arxiv", "reason": "..."}}],
+  "key_facts": [{{"claim": "...", "value": "...", "source_chunk_ids": [], "confidence": 0.9}}]
 }}"""
 
 # ── Reviewer Agent ───────────────────────────────────────────────────
@@ -395,27 +557,43 @@ Be direct and actionable. This briefing will be injected into every agent's prom
 
 # ── Synthesizer ──────────────────────────────────────────────────────
 
-SYNTHESIZER_SYSTEM = """You are the Research Synthesizer. Produce a comprehensive final report from the institute's collective work. Your report must:
+SYNTHESIZER_SYSTEM = """You are the Research Synthesizer. Produce a comprehensive, publication-quality research report from the institute's collective work.
 
-1. Answer the original research question clearly
-2. Present the strongest hypotheses with their evidence
-3. Acknowledge contradictions and unresolved questions
-4. Credit specific agents' contributions
-5. Suggest future research directions"""
+Your report MUST follow these requirements:
 
-SYNTHESIZER_REPORT = """Synthesize the research findings.
+1. STRUCTURE: Use numbered sections with clear markdown headers. Open each section with a key finding before supporting analysis.
+2. PRECISION: Use exact numbers, dates, and values from the evidence. Never use vague qualifiers ("significant", "substantial") when precise data is available.
+3. TABLES: Use markdown tables for any comparative analysis involving 3 or more items.
+4. CALCULATIONS: Show calculations explicitly when making quantitative claims (formula → intermediate steps → result).
+5. CITATIONS: Cite sources inline using [Source Title] notation, referencing the provided source list. Every factual claim must cite its source.
+6. TERMINOLOGY: Use precise domain terminology. No colloquial language or hedging without evidence.
+7. COMPETING VIEWS: Present competing viewpoints when evidence conflicts, rather than asserting false consensus. State which view has stronger evidence and why.
+8. SOURCE PRIORITY: Prefer primary sources (official filings, peer-reviewed papers, manufacturer specs, government publications) over secondary sources (news, blogs, forums).
+9. COMPLETENESS: Address all aspects of the research question. Do not omit subproblems or leave questions unanswered.
+10. REFERENCES: End with a numbered References section listing all cited sources with titles and URLs."""
+
+SYNTHESIZER_REPORT = """Synthesize the research findings into a comprehensive report.
 
 === ORIGINAL QUESTION ===
 {research_question}
 
-=== ALL HYPOTHESES (with status) ===
-{hypotheses}
+=== HYPOTHESIS EVIDENCE CHAINS ===
+Each hypothesis below includes its supporting/contradicting evidence, experiment results, and linked findings:
 
-=== KEY FINDINGS ===
-{findings}
+{evidence_blocks}
 
-=== EXPERIMENT RESULTS ===
-{experiment_results}
+=== RAW SOURCE EVIDENCE ===
+Relevant source material retrieved for the research question. Use these for precise quotes and data:
+
+{source_evidence}
+
+=== VERIFIED KEY FACTS ===
+Precise factual claims extracted during research with source attribution:
+
+{key_facts}
+
+=== AVAILABLE SOURCES (for citation) ===
+{sources}
 
 === UNRESOLVED CONTRADICTIONS ===
 {contradictions}
@@ -423,7 +601,7 @@ SYNTHESIZER_REPORT = """Synthesize the research findings.
 === AGENT CONTRIBUTIONS ===
 {agent_contributions}
 
-Produce a comprehensive research report in markdown format."""
+Produce the research report following all requirements from your system instructions."""
 
 # ── Experiment Interpretation ────────────────────────────────────────
 

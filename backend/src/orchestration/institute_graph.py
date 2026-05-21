@@ -19,6 +19,8 @@ import logging
 from typing import Any
 from uuid import uuid4
 
+from pydantic import BaseModel, Field
+
 from langgraph.graph import StateGraph, START, END
 
 from src.agents.controller import ControllerAgent
@@ -50,6 +52,13 @@ from src.memory.hindsight_client import AgentMemory
 from src.memory.server import HindsightManager
 
 logger = logging.getLogger(__name__)
+
+
+class _SynthesisVerification(BaseModel):
+    """Structured output from synthesis quality verification."""
+    issues_found: bool = False
+    severity: str = Field(default="minor", description="'minor' or 'major'")
+    revision_instructions: str = ""
 
 
 class InstituteGraphBuilder:
@@ -110,6 +119,9 @@ class InstituteGraphBuilder:
         self._debate_builder = DebateCycleBuilder(
             llm, graph, queries, event_bus, config=self._config,
         )
+
+        # Session-level search query deduplication cache
+        self._search_cache: dict[tuple[str, str], bool] = {}
 
     async def _update_budget_state(
         self,
@@ -188,7 +200,16 @@ class InstituteGraphBuilder:
         graph.add_edge("init_session", "director_plan")
         graph.add_edge("director_plan", "spawn_squids")
         graph.add_edge("spawn_squids", "research_cycle")
-        graph.add_edge("research_cycle", "debate_cycle")
+
+        # Adaptive routing: skip debate for focused_extraction mode
+        graph.add_conditional_edges(
+            "research_cycle",
+            self._route_pipeline,
+            {
+                "debate_cycle": "debate_cycle",
+                "controller_eval": "controller_eval",
+            },
+        )
         graph.add_edge("debate_cycle", "controller_eval")
 
         # Conditional: continue loop or stop
@@ -436,6 +457,8 @@ class InstituteGraphBuilder:
         from src.agents.squid import SquidAgent
         from src.models.agent_state import SquidState
 
+        self._current_session_id = state.get("session_id", "")
+
         # Build SquidState for each active agent
         tasks = []
         active_agents = []
@@ -504,6 +527,11 @@ class InstituteGraphBuilder:
                 workspace_tools=workspace_tools,
                 graph_queries=self._queries,
                 agent_memory=agent_memory,
+                search_cache=self._search_cache,
+                mentor=self._director,
+                team_progress_fn=self._get_team_progress,
+                hindsight_fn=self._get_hindsight_context,
+                global_budget_fn=lambda: state.get("budget_remaining_usd", 0.0),
             )
 
             sci_state = SquidState(
@@ -516,6 +544,9 @@ class InstituteGraphBuilder:
                 persona=agent.get("persona", {}),
                 iteration_summary=state.get("iteration_summary", ""),
                 workspace_path=agent.get("workspace_path", ""),
+                research_question=state.get("research_question", ""),
+                observations=[],
+                step_count=0,
             )
 
             tasks.append(squid.run(sci_state))
@@ -845,6 +876,67 @@ class InstituteGraphBuilder:
             **budget_updates,
         }
 
+    def _route_pipeline(self, state: InstituteState) -> str:
+        """Route based on pipeline mode: skip debate for focused extraction."""
+        mode = state.get("pipeline_mode", "deep_research")
+        if mode == "focused_extraction":
+            return "controller_eval"
+        return "debate_cycle"
+
+    async def _get_team_progress(self) -> str:
+        """Gather a summary of what squids have found this session."""
+        session_id = getattr(self, "_current_session_id", "")
+        if not session_id:
+            return "No other researcher progress available."
+        try:
+            key_facts = await self._graph.get_by_label(
+                "Note",
+                filters={"session_id": session_id},
+                limit=20,
+            )
+            key_facts = [n for n in key_facts if "key_fact" in (n.get("tags") or [])]
+            hypotheses = await self._queries.get_all_hypotheses(
+                status="active", session_id=session_id
+            )
+            lines = []
+            for fact in key_facts[:10]:
+                lines.append(
+                    f"- {fact.get('text', '')[:200]} "
+                    f"(by: {fact.get('created_by', '?')[:12]})"
+                )
+            for hyp in hypotheses[:5]:
+                lines.append(
+                    f"- Hypothesis: {hyp.get('text', '')[:200]} "
+                    f"(confidence: {hyp.get('confidence', '?')})"
+                )
+            return "\n".join(lines) if lines else "No other researcher progress available."
+        except Exception:
+            return "No other researcher progress available."
+
+    async def _get_hindsight_context(self, query: str) -> str:
+        """Gather institutional memory context from Hindsight."""
+        if not self._memory_manager or not self._memory_manager.is_running:
+            return ""
+        try:
+            institute_memory = AgentMemory(
+                agent_id="institute",
+                session_id="",
+                client=self._memory_manager.client,
+                config=self._config,
+            )
+            failures = await institute_memory.recall_past_failures(query)
+            progress = await institute_memory.reflect_on_progress(query)
+            parts = []
+            if failures:
+                parts.append("Past failed approaches:\n" + "\n".join(
+                    f"- {f.get('text', f.get('content', ''))[:200]}" for f in failures[:5]
+                ))
+            if progress:
+                parts.append(f"Session progress reflection: {progress[:500]}")
+            return "\n\n".join(parts) if parts else ""
+        except Exception:
+            return ""
+
     def _should_continue(self, state: InstituteState) -> str:
         """Decide whether to continue researching or stop."""
         if state.get("should_stop", False):
@@ -983,70 +1075,137 @@ class InstituteGraphBuilder:
         """
         Produce the final research synthesis report.
 
-        Gathers all hypotheses, findings, experiment results, and
-        agent contributions, then asks the LLM to produce a
-        comprehensive research report.
+        Uses rich evidence chains (get_hypothesis_context) and RAG-retrieved
+        source chunks to give the synthesizer access to actual evidence,
+        not just flat summaries.
         """
-        # Gather all artifacts for synthesis
         session_id = state.get("session_id", "")
-        hypotheses = await self._queries.get_all_hypotheses(status="active", session_id=session_id)
-        all_hypotheses = await self._queries.get_all_hypotheses(status="active", session_id=session_id)
-        refuted = await self._queries.get_all_hypotheses(status="refuted", session_id=session_id)
+        research_question = state.get("research_question", "")
+
+        # ── Rich hypothesis evidence chains ──────────────────────────
+        all_hypotheses = await self._queries.get_all_hypotheses(
+            status="active", session_id=session_id
+        )
+        refuted = await self._queries.get_all_hypotheses(
+            status="refuted", session_id=session_id
+        )
         all_hypotheses.extend(refuted)
 
-        contradictions = await self._queries.get_session_contradictions(session_id=session_id)
-
-        # Format for the synthesis prompt
-        hyp_text = "\n".join(
-            f"- [{h.get('status', 'active')}] (confidence: {h.get('confidence', '?')}, "
-            f"by: {h.get('created_by', '?')}): {h.get('text', '')}"
-            for h in all_hypotheses
+        # Build rich evidence blocks for top hypotheses
+        sorted_hyps = sorted(
+            all_hypotheses,
+            key=lambda h: h.get("confidence", 0),
+            reverse=True,
         )
+        evidence_blocks = []
+        for h in sorted_hyps[:15]:
+            ctx = await self._queries.get_hypothesis_context(h["id"])
+            block = (
+                f"### Hypothesis: {h.get('text', '')}\n"
+                f"Status: {h.get('status', 'active')} | "
+                f"Confidence: {h.get('confidence', '?')} | "
+                f"By: {h.get('created_by', '?')}\n"
+            )
+            findings = ctx.get("findings", [])
+            if findings:
+                block += "Evidence:\n" + "\n".join(
+                    f"  - [{f.get('conclusion_type', '?')}] {f.get('text', '')}"
+                    for f in findings
+                ) + "\n"
+            experiments = ctx.get("experiments", [])
+            for exp in experiments:
+                result = exp.get("result")
+                if result:
+                    block += (
+                        f"Experiment: exit={result.get('exit_code', '?')}, "
+                        f"output={result.get('stdout', '')[:1000]}\n"
+                    )
+            contradictors = ctx.get("contradictors", [])
+            if contradictors:
+                block += "Contradicted by:\n" + "\n".join(
+                    f"  - {c.get('text', '')[:200]}"
+                    for c in contradictors[:3]
+                ) + "\n"
+            evidence_blocks.append(block)
+        evidence_blocks_text = "\n---\n".join(evidence_blocks) if evidence_blocks else "None"
 
-        findings_data = await self._graph.get_by_label(
-            "Finding",
+        # ── RAG-retrieved source chunks ──────────────────────────────
+        source_chunks = await self._retriever.retrieve_source_chunks(
+            research_question,
+            top_k=20,
+            session_id=session_id,
+        )
+        source_evidence_text = "\n".join(
+            f"[Source chunk] (relevance={c.get('score', 0):.2f}):\n"
+            f"{c.get('text', '')[:500]}"
+            for c in source_chunks
+        ) if source_chunks else "No source material retrieved."
+
+        # ── Source metadata for citations ────────────────────────────
+        sources_data = await self._graph.get_by_label(
+            "Source",
             filters={"session_id": session_id},
-            limit=self._config.graph_findings_synthesis_limit,
+            limit=50,
         )
-        findings_text = "\n".join(
-            f"- ({f.get('conclusion_type', '?')}): {f.get('text', '')}"
-            for f in findings_data
-        )
+        sources_text = "\n".join(
+            f"- [{s.get('source_type', '?')}] {s.get('title', 'Untitled')} — {s.get('uri', 'no URI')}"
+            for s in sources_data
+        ) if sources_data else "No sources available."
 
-        results_data = await self._graph.get_by_label(
-            "ExperimentResult",
+        # ── Key facts (tagged Notes) ─────────────────────────────────
+        key_facts_data = await self._graph.get_by_label(
+            "Note",
             filters={"session_id": session_id},
-            limit=self._config.graph_experiment_results_limit,
+            limit=50,
         )
-        results_text = "\n".join(
-            f"- Exit {r.get('exit_code', '?')}: {r.get('stdout', '')[:200]}"
-            for r in results_data
-        )
+        key_facts_list = [
+            n for n in key_facts_data
+            if "key_fact" in (n.get("tags") or [])
+        ]
+        key_facts_text = "\n".join(
+            f"- {n.get('text', '')}"
+            for n in key_facts_list
+        ) if key_facts_list else "None"
 
+        # ── Unresolved contradictions ────────────────────────────────
+        contradictions = await self._queries.get_session_contradictions(
+            session_id=session_id
+        )
         contradictions_text = "\n".join(
-            f"- {c.get('source_text', '')[:100]} vs {c.get('target_text', '')[:100]}"
-            for c in contradictions[: self._config.graph_contradictions_prompt_limit]
-        )
+            f"- {c.get('source_text', '')[:150]} vs {c.get('target_text', '')[:150]}"
+            for c in contradictions[:self._config.graph_contradictions_prompt_limit]
+        ) or "None"
 
+        # ── Agent contributions ──────────────────────────────────────
         agent_text = "\n".join(
             f"- {a['name']} ({a['agent_id']}): {a['line_of_inquiry']}"
             for a in state.get("agents", [])
-        )
+        ) or "None"
 
         prompt = SYNTHESIZER_REPORT.format(
-            research_question=state.get("research_question", ""),
-            hypotheses=hyp_text or "None",
-            findings=findings_text or "None",
-            experiment_results=results_text or "None",
-            contradictions=contradictions_text or "None",
-            agent_contributions=agent_text or "None",
+            research_question=research_question,
+            evidence_blocks=evidence_blocks_text,
+            source_evidence=source_evidence_text,
+            sources=sources_text,
+            key_facts=key_facts_text,
+            contradictions=contradictions_text,
+            agent_contributions=agent_text,
         )
+
+        # Use powerful model for synthesis — highest impact, single call
+        model_override = self._config.powerful_model or None
 
         report = await self._llm.complete(
             prompt=prompt,
             system=SYNTHESIZER_SYSTEM,
             temperature=self._config.temperature_synthesizer,
             max_tokens=self._config.max_tokens_synthesizer,
+            model_override=model_override,
+        )
+
+        # Quality self-check and conditional revision
+        report = await self._verify_and_revise_synthesis(
+            report, sources_text, research_question, model_override,
         )
 
         # Snapshot and stop workspace servers before completing
@@ -1071,3 +1230,81 @@ class InstituteGraphBuilder:
                 "content": report,
             }],
         }
+
+    async def _verify_and_revise_synthesis(
+        self,
+        report: str,
+        sources_text: str,
+        research_question: str,
+        model_override: str | None,
+    ) -> str:
+        """
+        Quality self-check on the synthesis report with conditional revision.
+
+        Uses fast_model for verification (cheap). If major issues found,
+        makes one revision call with the powerful model. Capped at 1 revision.
+        """
+        verify_prompt = f"""Review this research report for quality issues.
+
+REPORT:
+{report[:8000]}
+
+AVAILABLE SOURCES:
+{sources_text[:2000]}
+
+RESEARCH QUESTION: {research_question}
+
+Check for:
+1. Factual claims without inline citations when sources are available
+2. Vague qualifiers ("significant", "substantial") where precise numbers exist in sources
+3. Internal contradictions within the report
+4. Missing comparison tables where 3+ items are being compared
+5. Sections without clear finding statements
+
+Respond with JSON:
+{{
+  "issues_found": true/false,
+  "severity": "minor" or "major",
+  "revision_instructions": "specific instructions for what to fix (empty if no issues)"
+}}"""
+
+        try:
+            verify_result = await self._llm.complete_structured(
+                prompt=verify_prompt,
+                response_model=_SynthesisVerification,
+                temperature=self._config.temperature_default_structured,
+                model_override=self._config.fast_model or None,
+            )
+        except Exception as exc:
+            logger.warning("Synthesis verification failed: %s", exc)
+            return report
+
+        if not verify_result.issues_found or verify_result.severity != "major":
+            return report
+
+        # One revision pass for major issues
+        revision_prompt = (
+            f"Revise the following research report based on these quality issues:\n\n"
+            f"ISSUES:\n{verify_result.revision_instructions}\n\n"
+            f"ORIGINAL REPORT:\n{report}\n\n"
+            f"AVAILABLE SOURCES:\n{sources_text[:2000]}\n\n"
+            f"Produce the revised report. Keep all accurate content, fix only the flagged issues."
+        )
+
+        try:
+            revised = await self._llm.complete(
+                prompt=revision_prompt,
+                system=SYNTHESIZER_SYSTEM,
+                temperature=self._config.temperature_synthesizer,
+                max_tokens=self._config.max_tokens_synthesizer,
+                model_override=model_override,
+            )
+            logger.info(
+                "Synthesis revised: severity=%s, instructions=%s",
+                verify_result.severity,
+                verify_result.revision_instructions[:100],
+            )
+            return revised
+        except Exception as exc:
+            logger.warning("Synthesis revision failed: %s", exc)
+            return report

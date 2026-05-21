@@ -48,7 +48,7 @@ class ResearchService:
             question="What mechanisms drive X?",
             sources=["paper.pdf"],
             num_agents=3,
-            budget=500,
+            budget_usd=500,
             max_iterations=5,
         )
         await service.shutdown()
@@ -176,6 +176,7 @@ class ResearchService:
         sources: list[str] | None = None,
         num_agents: int | None = None,
         budget_usd: float | None = None,
+        budget: float | None = None,
         max_iterations: int | None = None,
         session_id: str | None = None,
     ) -> dict[str, Any]:
@@ -186,7 +187,8 @@ class ResearchService:
             question: The research question to investigate.
             sources: Optional list of source file paths or URLs.
             num_agents: Number of squid agents (overrides default).
-            budget: LLM call budget (overrides default).
+            budget_usd: LLM dollar budget (overrides default).
+            budget: Backward-compatible alias for budget_usd.
             max_iterations: Max research iterations (overrides default).
 
         Returns:
@@ -195,6 +197,7 @@ class ResearchService:
         self._ensure_initialized()
 
         resolved_session_id = session_id or uuid4().hex[: self._config.session_id_length]
+        resolved_budget_usd = budget_usd if budget_usd is not None else budget
         token = set_current_session_id(resolved_session_id)
 
         try:
@@ -239,8 +242,8 @@ class ResearchService:
                 "research_question": question,
                 "session_id": resolved_session_id,
                 "num_agents": num_agents or self._config.default_agents,
-                "budget_total_usd": budget_usd or self._config.default_budget_usd,
-                "budget_remaining_usd": budget_usd or self._config.default_budget_usd,
+                "budget_total_usd": resolved_budget_usd or self._config.default_budget_usd,
+                "budget_remaining_usd": resolved_budget_usd or self._config.default_budget_usd,
                 "max_iterations": max_iterations or self._config.default_iterations,
                 "source_ids": source_ids,
                 "iteration": 0,

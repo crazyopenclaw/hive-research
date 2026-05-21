@@ -16,6 +16,13 @@ from dotenv import load_dotenv
 
 from port_utils import describe_port_listeners, kill_ports
 
+DOCKER_DESKTOP_PROCESS_NAMES = {
+    "com.docker.backend",
+    "com.docker.backend.exe",
+}
+DEFAULT_APP_PORTS = [3000, 8000]
+NEO4J_PROBE_TIMEOUT_SECONDS = 5
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Start the local ResearchSquid dev stack.")
@@ -24,7 +31,12 @@ def parse_args() -> argparse.Namespace:
         nargs="*",
         type=int,
         default=None,
-        help="Force-kill listeners on these ports before startup. Defaults to 3000 and 8000 when the flag is present without values.",
+        help="Force-kill listeners on these ports before startup. Defaults to 3000 and 8000.",
+    )
+    parser.add_argument(
+        "--no-kill-ports",
+        action="store_true",
+        help="Do not clear existing frontend/backend listeners before startup.",
     )
     return parser.parse_args()
 
@@ -40,15 +52,20 @@ def run_cmd(cmd, check=True, capture=False):
 
 
 def docker_services_running():
+    services = docker_running_services()
+    return "neo4j" in services and "postgres" in services
+
+
+def docker_running_services():
+    root_dir = os.path.dirname(os.path.dirname(__file__))
     result = run_cmd(
-        "docker compose ps --services --filter status=running",
+        f'docker compose -f "{root_dir}/docker-compose.yml" -f "{root_dir}/docker-compose.dev.yml" ps --services --filter status=running',
         check=False,
         capture=True,
     )
     if result and result.stdout:
-        services = result.stdout.strip().split("\n")
-        return "neo4j" in services and "postgres" in services
-    return False
+        return set(result.stdout.strip().split("\n"))
+    return set()
 
 
 def start_docker_services():
@@ -67,14 +84,40 @@ def start_docker_services():
             if result.stderr:
                 print(result.stderr.strip())
         return False
-    print("Waiting for services to be healthy...")
-    for _ in range(30):
-        time.sleep(2)
-        if docker_services_running():
+    print("Docker Compose accepted the startup request.")
+    return True
+
+
+def recreate_neo4j_container():
+    print("Recreating Neo4j container while preserving the neo4j_data volume...")
+    root_dir = os.path.dirname(os.path.dirname(__file__))
+    result = run_cmd(
+        f'docker compose -f "{root_dir}/docker-compose.yml" -f "{root_dir}/docker-compose.dev.yml" rm -sf neo4j',
+        check=False,
+        capture=True,
+    )
+    if result is None or result.returncode != 0:
+        print("WARNING: Could not remove the existing Neo4j container.")
+        if result is not None:
+            if result.stdout:
+                print(result.stdout.strip())
+            if result.stderr:
+                print(result.stderr.strip())
+        return False
+    return True
+
+
+def wait_for_docker_services_running(timeout_seconds: int = 60):
+    print("Waiting for Docker containers to stay running...")
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        running = docker_running_services()
+        if "neo4j" in running and "postgres" in running:
             print("Docker containers are running.")
             return True
-    print("WARNING: Docker services may not be fully ready.")
-    return True
+        time.sleep(2)
+    print("WARNING: Docker containers did not all stay running.")
+    return False
 
 
 def ensure_sandbox_image():
@@ -116,10 +159,13 @@ def stop_docker_services():
     )
 
 
-def maybe_kill_requested_ports(ports):
-    if ports is None:
+def maybe_kill_requested_ports(ports, *, disabled: bool = False):
+    if disabled:
+        print("Skipping app port cleanup.")
         return
-    target_ports = ports or [3000, 8000]
+    target_ports = ports if ports is not None else DEFAULT_APP_PORTS
+    if not target_ports:
+        target_ports = DEFAULT_APP_PORTS
     print(f"Force-clearing listening processes on ports: {', '.join(str(port) for port in target_ports)}")
     results = kill_ports(target_ports)
     for port in target_ports:
@@ -128,6 +174,47 @@ def maybe_kill_requested_ports(ports):
             print(f"  Port {port}: terminated PIDs {', '.join(str(pid) for pid in sorted(killed))}")
         else:
             print(f"  Port {port}: no listeners terminated")
+
+
+def kill_existing_dev_starters():
+    if sys.platform == "win32":
+        return
+
+    try:
+        result = subprocess.run(
+            ["ps", "-eo", "pid=,command="],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        return
+    if result.returncode != 0:
+        return
+
+    current_pid = os.getpid()
+    killed = []
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        pid_text, _, command = stripped.partition(" ")
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        if pid == current_pid:
+            continue
+        if "python" not in command or "scripts/dev.py" not in command:
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+            killed.append(pid)
+        except OSError:
+            pass
+
+    if killed:
+        print(f"Terminated existing dev starter PIDs: {', '.join(str(pid) for pid in killed)}")
 
 
 def ensure_python_modules(venv_python):
@@ -157,7 +244,7 @@ def ensure_python_modules(venv_python):
     sys.exit(1)
 
 
-def neo4j_ready(venv_python, env):
+def neo4j_probe(venv_python, env):
     probe = [
         venv_python,
         "-c",
@@ -166,14 +253,34 @@ def neo4j_ready(venv_python, env):
             "from neo4j import GraphDatabase; "
             "driver = GraphDatabase.driver("
             "os.getenv('NEO4J_URI', 'bolt://localhost:7687'), "
-            "auth=(os.getenv('NEO4J_USER', 'neo4j'), os.getenv('NEO4J_PASSWORD', 'researchsquid'))"
+            "auth=(os.getenv('NEO4J_USER', 'neo4j'), os.getenv('NEO4J_PASSWORD', 'researchsquid')), "
+            f"connection_timeout={NEO4J_PROBE_TIMEOUT_SECONDS}"
             "); "
             "driver.verify_connectivity(); "
             "driver.close()"
         ),
     ]
-    result = subprocess.run(probe, env=env, capture_output=True, text=True)
-    return result.returncode == 0
+    try:
+        result = subprocess.run(
+            probe,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=NEO4J_PROBE_TIMEOUT_SECONDS + 1,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"probe timed out after {NEO4J_PROBE_TIMEOUT_SECONDS + 1}s"
+    if result.returncode == 0:
+        return True, ""
+    detail = (result.stderr or result.stdout or "probe exited without details").strip()
+    if len(detail) > 600:
+        detail = detail[-600:]
+    return False, detail
+
+
+def neo4j_ready(venv_python, env):
+    ready, _detail = neo4j_probe(venv_python, env)
+    return ready
 
 
 def _local_docker_env_mismatches(env):
@@ -203,15 +310,43 @@ def _local_docker_env_mismatches(env):
     return mismatches
 
 
-def wait_for_neo4j(venv_python, env):
+def _uses_local_neo4j(env):
+    neo4j_uri = env.get("NEO4J_URI", "bolt://localhost:7687")
+    return "localhost:" in neo4j_uri or "127.0.0.1:" in neo4j_uri
+
+
+def wait_for_neo4j(venv_python, env, timeout_seconds: int = 90):
     print("Waiting for Neo4j Bolt readiness...")
-    for _ in range(45):
-        if neo4j_ready(venv_python, env):
+    deadline = time.time() + timeout_seconds
+    attempt = 1
+    last_detail = ""
+    while time.time() < deadline:
+        ready, detail = neo4j_probe(venv_python, env)
+        if ready:
             print("Neo4j Bolt is ready.")
             return True
+        if detail:
+            last_detail = detail
+        running = docker_running_services()
+        if "postgres" in running and "neo4j" not in running:
+            print("WARNING: Neo4j container exited before Bolt became ready.")
+            if last_detail:
+                print("Last Neo4j probe error:")
+                print(last_detail)
+            return False
+        remaining = max(0, int(deadline - time.time()))
+        print(f"  Neo4j Bolt not ready yet (attempt {attempt}, {remaining}s left).")
+        attempt += 1
         time.sleep(2)
     print("WARNING: Neo4j Bolt did not become ready in time.")
+    if last_detail:
+        print("Last Neo4j probe error:")
+        print(last_detail)
     return False
+
+
+def docker_logs_command() -> str:
+    return "docker compose -f docker-compose.yml -f docker-compose.dev.yml logs --tail=120 neo4j"
 
 
 def backend_ready(url: str) -> bool:
@@ -239,24 +374,23 @@ def ensure_neo4j_available(venv_python, env, *, attempted_docker_start: bool) ->
         print("Using existing Neo4j instance.")
         return
     print("ERROR: Neo4j is not reachable at the configured NEO4J_URI.")
-    conflict_ports = _detect_institute_port_conflicts(env)
-    if conflict_ports:
-        print("Conflicting local listeners detected:")
-        for port, listeners in conflict_ports.items():
-            for listener in listeners:
-                print(f"  Port {port}: PID {listener['pid']} ({listener['process_name']})")
-        print("If those are stale listeners, clear them with:")
-        print("  python scripts\\kill_ports.py 7687 5432 3000 8000" if sys.platform == "win32" else "  python scripts/kill_ports.py 7687 5432 3000 8000")
+    conflicts = _classify_institute_port_listeners(env)
+    actionable_ports = _print_port_listener_diagnostics(conflicts)
+    if actionable_ports:
+        _print_kill_ports_help(actionable_ports)
+    if _has_expected_docker_proxy(conflicts):
+        print("Docker Desktop proxy listeners are expected for published Docker service ports.")
     if attempted_docker_start:
-        print("Docker startup also failed, so the coordinator cannot boot.")
-        print("Start Docker Desktop or run a local Neo4j instance, then retry.")
+        print("Docker Compose startup was attempted, but Neo4j Bolt is still unavailable.")
+        print("Inspect Neo4j logs with:")
+        print(f"  {docker_logs_command()}")
     else:
         print("Start Docker services or point NEO4J_URI to a running local Neo4j instance, then retry.")
     print(f"Current NEO4J_URI: {env.get('NEO4J_URI', 'bolt://localhost:7687')}")
     sys.exit(1)
 
 
-def _detect_institute_port_conflicts(env):
+def _local_service_ports(env):
     ports = {3000, 8000}
     neo4j_uri = env.get("NEO4J_URI", "bolt://localhost:7687")
     database_url = env.get("DATABASE_URL", "postgresql://squid:researchsquid@localhost:5432/squid")
@@ -270,13 +404,109 @@ def _detect_institute_port_conflicts(env):
             ports.add(int(database_url.rsplit(":", 1)[-1].split("/", 1)[0]))
         except ValueError:
             pass
-    conflicts = describe_port_listeners(sorted(ports))
-    return {port: listeners for port, listeners in conflicts.items() if listeners}
+    return ports
+
+
+def _classify_institute_port_listeners(env):
+    listeners_by_port = describe_port_listeners(sorted(_local_service_ports(env)))
+    running_services = docker_running_services()
+    classified = {}
+    for port, listeners in listeners_by_port.items():
+        if not listeners:
+            continue
+        classified[port] = [
+            {
+                **listener,
+                "expected_docker_proxy": _is_expected_docker_proxy(port, listener, running_services),
+            }
+            for listener in listeners
+        ]
+    return classified
+
+
+def _is_expected_docker_proxy(port, listener, running_services):
+    process_name = os.path.basename(str(listener.get("process_name", ""))).lower()
+    service_by_port = {
+        5432: "postgres",
+        7687: "neo4j",
+    }
+    service = service_by_port.get(port)
+    if service is None or service not in running_services:
+        return False
+    return process_name in DOCKER_DESKTOP_PROCESS_NAMES or process_name == "unknown"
+
+
+def _has_expected_docker_proxy(conflicts):
+    return any(
+        listener["expected_docker_proxy"]
+        for listeners in conflicts.values()
+        for listener in listeners
+    )
+
+
+def _print_port_listener_diagnostics(conflicts):
+    if not conflicts:
+        return []
+
+    actionable_ports = []
+    print("Local port listeners detected:")
+    for port, listeners in conflicts.items():
+        actionable_for_port = False
+        for listener in listeners:
+            suffix = " (expected Docker Desktop proxy)" if listener["expected_docker_proxy"] else ""
+            print(f"  Port {port}: PID {listener['pid']} ({listener['process_name']}){suffix}")
+            actionable_for_port = actionable_for_port or not listener["expected_docker_proxy"]
+        if actionable_for_port:
+            actionable_ports.append(port)
+    return actionable_ports
+
+
+def _print_kill_ports_help(ports):
+    port_args = " ".join(str(port) for port in ports)
+    print("If those are stale listeners, clear them with:")
+    print(f"  python scripts\\kill_ports.py {port_args}" if sys.platform == "win32" else f"  python scripts/kill_ports.py {port_args}")
+
+
+def fail_docker_neo4j_startup(env, reason: str) -> None:
+    print(f"ERROR: {reason}")
+    ps = run_cmd(
+        "docker compose -f docker-compose.yml -f docker-compose.dev.yml ps -a",
+        check=False,
+        capture=True,
+    )
+    if ps is not None and ps.stdout:
+        print("Docker service status:")
+        print(ps.stdout.strip())
+    conflicts = _classify_institute_port_listeners(env)
+    actionable_ports = _print_port_listener_diagnostics(conflicts)
+    if actionable_ports:
+        _print_kill_ports_help(actionable_ports)
+    if _has_expected_docker_proxy(conflicts):
+        print("Docker Desktop proxy listeners are expected for published Docker service ports.")
+    print("Inspect Neo4j logs with:")
+    print(f"  {docker_logs_command()}")
+    print(f"Current NEO4J_URI: {env.get('NEO4J_URI', 'bolt://localhost:7687')}")
+    sys.exit(1)
 
 
 def main():
     args = parse_args()
     print("Starting ResearchSquid...")
+    procs = []
+
+    def cleanup(sig=None, frame=None):
+        print("\nStopping...")
+        for p in procs:
+            try:
+                p.terminate()
+            except Exception:
+                pass
+        stop_docker_services()
+        maybe_kill_requested_ports(DEFAULT_APP_PORTS)
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, cleanup)
+    signal.signal(signal.SIGTERM, cleanup)
 
     # Determine venv python path
     venv_dir = os.path.join(os.path.dirname(__file__), "..", ".venv")
@@ -291,18 +521,26 @@ def main():
 
     ensure_python_modules(venv_python)
 
-    maybe_kill_requested_ports(args.kill_ports)
+    kill_existing_dev_starters()
+    maybe_kill_requested_ports(args.kill_ports, disabled=args.no_kill_ports)
 
     env = os.environ.copy()
 
     # Start Docker services if not running
     docker_available = run_cmd("docker --version", check=False) is not None
     attempted_docker_start = False
+    recreated_neo4j = False
+    if docker_available and _uses_local_neo4j(env) and "neo4j" not in docker_running_services():
+        recreated_neo4j = recreate_neo4j_container()
     services_running = docker_services_running() if docker_available else False
     if docker_available and not services_running:
         attempted_docker_start = True
         started = start_docker_services()
-        services_running = docker_services_running() if started else False
+        if not started:
+            ensure_neo4j_available(venv_python, env, attempted_docker_start=attempted_docker_start)
+        services_running = wait_for_docker_services_running()
+        if not services_running:
+            fail_docker_neo4j_startup(env, "Docker Compose accepted startup, but Neo4j did not stay running.")
     if docker_available and services_running:
         mismatches = _local_docker_env_mismatches(env)
         if mismatches:
@@ -311,25 +549,29 @@ def main():
                 print(f"  - {mismatch}")
             print("Update the repo-root .env or use external service URLs instead of localhost defaults.")
             sys.exit(1)
-        wait_for_neo4j(venv_python, env)
+        if not wait_for_neo4j(venv_python, env):
+            if docker_available and _uses_local_neo4j(env) and not recreated_neo4j:
+                print("Neo4j did not become ready; trying one safe container recreate.")
+                recreated_neo4j = recreate_neo4j_container()
+                if recreated_neo4j:
+                    attempted_docker_start = True
+                    if start_docker_services() and wait_for_docker_services_running() and wait_for_neo4j(venv_python, env):
+                        ensure_sandbox_image()
+                    else:
+                        fail_docker_neo4j_startup(env, "Neo4j still did not become ready after a safe container recreate.")
+                else:
+                    fail_docker_neo4j_startup(env, "Neo4j did not become ready, and the safe container recreate failed.")
+            else:
+                running = docker_running_services()
+                if "neo4j" not in running:
+                    fail_docker_neo4j_startup(env, "Neo4j container exited before Bolt became reachable.")
+                fail_docker_neo4j_startup(env, "Neo4j container is running, but Bolt never became reachable.")
+            running = docker_running_services()
+            if "neo4j" not in running:
+                fail_docker_neo4j_startup(env, "Neo4j container exited before Bolt became reachable.")
         ensure_sandbox_image()
     else:
         ensure_neo4j_available(venv_python, env, attempted_docker_start=attempted_docker_start)
-
-    procs = []
-
-    def cleanup(sig=None, frame=None):
-        print("\nStopping...")
-        for p in procs:
-            try:
-                p.terminate()
-            except Exception:
-                pass
-        stop_docker_services()
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, cleanup)
-    signal.signal(signal.SIGTERM, cleanup)
 
     # Start backend
     print("Starting backend on :8000...")
